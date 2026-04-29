@@ -21,11 +21,11 @@
 #define PARITY UART_PARITY_NONE
 #define UART_TX_PIN 0
 #define UART_RX_PIN 1
-#define LED_DELAY_MS 500
+#define LED_DELAY_MS 125
 
 // Definition for safe Geofence offset and calculation for the degree offset, approximates the offset as in cartesians
 #define geof_offset_m 1
-#define geof_prec 3
+#define geof_prec 5
 const double earth_approx_rad = 6371000;
 const int32_t geof_offset_deg = (int32_t)(((double)(geof_offset_m * 180) / (earth_approx_rad * M_PI)) * 1e7);
 
@@ -52,11 +52,15 @@ typedef enum{
     SEND_CORRECTION,
     SEND_RESUME,
     DEBUG,
-    
-}core_comms_t;
+}core0_comms_t;
+
+typedef enum{
+    RUNNING = 0,
+    BOOL_INCOMMING, // Reserved for if I decide to delegate the geofence check to Core 1
+}core1_comms_t;
 
 // Global global variables
-// MAVLINK recieve definitions
+// MAVLINK recieves
 mavlink_status_t status;
 mavlink_message_t msg;
 mavlink_command_ack_t ack;
@@ -70,13 +74,13 @@ const uint8_t system_id = 1, component_id_mc = 200, component_id_fc = 1, chan = 
 volatile uint8_t byte;
 
 // Core instruction enums
-core_comms_t core0_instruction = IDLE, core1_instruction = IDLE; 
+core0_comms_t core1_instruction = IDLE; 
+core1_comms_t core0_instruction = RUNNING;
 
 // Core 1 variables and flags (for safety)
 volatile int32_t lattitude, longitude;
 // Core 0 variables and flags (for safety)
 volatile bool wait = false, first_message = true, calculate = false, correcting = false; 
-
 
 // Coords setup + geofence as a global variable
 coords_t coords[] = {{549130910, 97803710}, {549128980, 97807300}, {549127420, 97804640}, {549129970, 97801600}};
@@ -97,6 +101,7 @@ void core1_FIFO(){
         if(core1_instruction == SENDING_COORDS){
             lattitude = multicore_fifo_pop_blocking();
             longitude = multicore_fifo_pop_blocking();
+            core1_instruction = IDLE;
         }
         else if(core1_instruction == DEBUG){
             uint8_t which = multicore_fifo_pop_blocking();
@@ -124,6 +129,7 @@ void core1_FIFO(){
                 printf("%d", status.parse_state);
                 break;
             }
+            core1_instruction = IDLE;
         }
     }
     multicore_fifo_clear_irq();
@@ -230,23 +236,28 @@ int core1_entry(){
     while(1){
         switch(core1_instruction){
             case(SEND_STREAM_REQ):
+            core1_instruction = IDLE;
             send_mav(&pico_heartbeat);
             send_mav(&request_stream);
             break;
 
             case(SEND_PAUSE):
+            core1_instruction = IDLE;
             send_mav(&pause);
             break;
 
             case(CALCULATE_RETURN):
+            core1_instruction = IDLE;
             calculate_return_coords(lattitude, longitude);
             break;
 
             case(SEND_CORRECTION):
+            core1_instruction = IDLE;
             send_mav(&correct);
             break;
 
             case(SEND_RESUME):
+            core1_instruction = IDLE;
             send_mav(&correct_resume);
             break;
         }
@@ -261,6 +272,10 @@ void init(void){
     if (watchdog_enable_caused_reboot() || watchdog_caused_reboot()) {
         printf("Watchdog oopsie\n");
     }
+
+    multicore_fifo_clear_irq();
+    irq_set_exclusive_handler(SIO_IRQ_PROC0, core0_FIFO);
+    irq_set_enabled(SIO_IRQ_PROC0, true);
 
     multicore_launch_core1(core1_entry); // Launches the second core with its main function
 
