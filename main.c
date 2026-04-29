@@ -4,6 +4,7 @@
 #include "pico/cyw43_arch.h"
 #include "hardware/watchdog.h"
 #include "pico/multicore.h"
+#include "hardware/irq.h"
 // C common libraries
 #include <stdio.h>
 #include <math.h>
@@ -28,53 +29,18 @@
 const double earth_approx_rad = 6371000;
 const int32_t geof_offset_deg = (int32_t)(((double)(geof_offset_m * 180) / (earth_approx_rad * M_PI)) * 1e7);
 
-// enum PX4_CUSTOM_MAIN_MODE {
-// 	PX4_CUSTOM_MAIN_MODE_MANUAL = 1,
-// 	PX4_CUSTOM_MAIN_MODE_ALTCTL,
-// 	PX4_CUSTOM_MAIN_MODE_POSCTL,
-// 	PX4_CUSTOM_MAIN_MODE_AUTO,
-// 	PX4_CUSTOM_MAIN_MODE_ACRO,
-// 	PX4_CUSTOM_MAIN_MODE_OFFBOARD,
-// 	PX4_CUSTOM_MAIN_MODE_STABILIZED,
-// 	PX4_CUSTOM_MAIN_MODE_RATTITUDE_LEGACY,
-// 	PX4_CUSTOM_MAIN_MODE_SIMPLE, /* unused, but reserved for future use */
-// 	PX4_CUSTOM_MAIN_MODE_TERMINATION,
-// 	PX4_CUSTOM_MAIN_MODE_ALTITUDE_CRUISE
-// };
-
-// enum PX4_CUSTOM_SUB_MODE_AUTO {
-// 	PX4_CUSTOM_SUB_MODE_AUTO_READY = 1,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_LOITER,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_MISSION,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_RTL,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_LAND,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_RESERVED_DO_NOT_USE, // was PX4_CUSTOM_SUB_MODE_AUTO_RTGS, deleted 2020-03-05
-// 	PX4_CUSTOM_SUB_MODE_AUTO_FOLLOW_TARGET,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_PRECLAND,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_VTOL_TAKEOFF,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL1,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL2,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL3,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL4,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL5,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL6,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL7,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL8,
-// };
-
 typedef struct{ // Coordinate struct with latt and long expressed multplied by 1e7
     int32_t delta_lat_e7;
     int32_t phi_long_e7;
 }coords_t; 
 
 typedef struct{ // Geofence struct with adaptive sizing
+    uint8_t num_of_waypoints;
     coords_t* waypoints;
     int32_t extremas_long[2];
     int32_t extremas_latt[2];
     double long_avg; 
     double latt_avg;
-    uint8_t num_of_waypoints;
 }geofence_t;
 
 // MAVLINK recieve definitions
@@ -86,11 +52,11 @@ mavlink_global_position_int_t position;
 // MAVLINK commands
 mavlink_message_t request_stream, hover_mode, mission_mode, pause, unpause, correct, correct_resume, pico_heartbeat;
 const int32_t correct_alt = 50;
-// const enum PX4_CUSTOM_MAIN_MODE automatic = PX4_CUSTOM_MAIN_MODE_AUTO;
-// const enum PX4_CUSTOM_SUB_MODE_AUTO hover = PX4_CUSTOM_SUB_MODE_AUTO_LOITER, mission = PX4_CUSTOM_SUB_MODE_AUTO_MISSION;
 const uint8_t system_id = 1, component_id_mc = 200, component_id_fc = 1, chan = MAVLINK_COMM_2, UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
 // UART handling params
 volatile uint8_t byte;
+
+// Booleans for running the code
 volatile bool wait = false, first_message = true;   
 
 // Coords setup + geofence as a global variable
@@ -104,6 +70,16 @@ void init(void);
 void send_mav(mavlink_message_t*);
 bool check_geofence(mavlink_global_position_int_t);
 void calculate_return_coords(mavlink_global_position_int_t);
+
+void core1_FIFO(){
+
+}
+
+void core0_FIFO(){
+
+    
+}
+
 
 // UART recieve interrupt
 void on_uart_rx(){
@@ -175,11 +151,6 @@ void on_uart_rx(){
 int main(){
     init();
 
-    if (watchdog_enable_caused_reboot()) {
-        printf("Watchdog oopsie\n");
-        return 0;
-    }
-
     while(true){
         pico_set_led(true);
         sleep_ms(LED_DELAY_MS);
@@ -193,9 +164,17 @@ int main(){
     free(geofence.waypoints);
 }
 
+int core1_main(){
+
+
+}
+
 void init(void){
     stdio_init_all();
     pico_led_init();
+    if (watchdog_enable_caused_reboot()) {
+        printf("Watchdog oopsie\n");
+    }
 
     // Sets up UART registers
     uart_init(UART_ID, BAUD_RATE);
@@ -213,9 +192,6 @@ void init(void){
 
     // Now enable the UART to send interrupts - RX only
     uart_set_irq_enables(UART_ID, true, false);
-    
-    //Enables the watchdog timer at 1s delay
-    // watchdog_enable(1000, 1);
 
     // Defines the stop messages and the request datastream message
     mavlink_msg_request_data_stream_pack(system_id, component_id_mc, &request_stream, system_id, component_id_fc, MAV_DATA_STREAM_ALL, (uint16_t)10, ((uint8_t)1));
@@ -253,6 +229,7 @@ void init(void){
         if(geofence.extremas_long[1] < geofence.waypoints[i].phi_long_e7){geofence.extremas_long[1] = geofence.waypoints[i].phi_long_e7;}
         if(geofence.extremas_latt[0] > geofence.waypoints[i].delta_lat_e7){geofence.extremas_latt[0] = geofence.waypoints[i].delta_lat_e7;}
         if(geofence.extremas_latt[1] < geofence.waypoints[i].delta_lat_e7){geofence.extremas_latt[1] = geofence.waypoints[i].delta_lat_e7;}
+        // watchdog_enable(1000, 1);
     }
 }
 
