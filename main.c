@@ -26,44 +26,9 @@
 
 // Definition for safe Geofence offset and calculation for the degree offset, approximates the offset as in cartesians
 #define geof_offset_m 1
-#define geof_prec 3
+#define geof_prec 5
 const double earth_approx_rad = 6371000;
 const int32_t geof_offset_deg = (int32_t)(((double)(geof_offset_m * 180) / (earth_approx_rad * M_PI)) * 1e7);
-
-// enum PX4_CUSTOM_MAIN_MODE {
-// 	PX4_CUSTOM_MAIN_MODE_MANUAL = 1,
-// 	PX4_CUSTOM_MAIN_MODE_ALTCTL,
-// 	PX4_CUSTOM_MAIN_MODE_POSCTL,
-// 	PX4_CUSTOM_MAIN_MODE_AUTO,
-// 	PX4_CUSTOM_MAIN_MODE_ACRO,
-// 	PX4_CUSTOM_MAIN_MODE_OFFBOARD,
-// 	PX4_CUSTOM_MAIN_MODE_STABILIZED,
-// 	PX4_CUSTOM_MAIN_MODE_RATTITUDE_LEGACY,
-// 	PX4_CUSTOM_MAIN_MODE_SIMPLE, /* unused, but reserved for future use */
-// 	PX4_CUSTOM_MAIN_MODE_TERMINATION,
-// 	PX4_CUSTOM_MAIN_MODE_ALTITUDE_CRUISE
-// };
-
-// enum PX4_CUSTOM_SUB_MODE_AUTO {
-// 	PX4_CUSTOM_SUB_MODE_AUTO_READY = 1,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_TAKEOFF,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_LOITER,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_MISSION,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_RTL,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_LAND,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_RESERVED_DO_NOT_USE, // was PX4_CUSTOM_SUB_MODE_AUTO_RTGS, deleted 2020-03-05
-// 	PX4_CUSTOM_SUB_MODE_AUTO_FOLLOW_TARGET,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_PRECLAND,
-// 	PX4_CUSTOM_SUB_MODE_AUTO_VTOL_TAKEOFF,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL1,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL2,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL3,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL4,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL5,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL6,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL7,
-// 	PX4_CUSTOM_SUB_MODE_EXTERNAL8,
-// };
 
 typedef struct{ // Coordinate struct with latt and long expressed multplied by 1e7
     int32_t delta_lat_e7;
@@ -71,12 +36,12 @@ typedef struct{ // Coordinate struct with latt and long expressed multplied by 1
 }coords_t; 
 
 typedef struct{ // Geofence struct with adaptive sizing
+    uint8_t num_of_waypoints;
     coords_t* waypoints;
     int32_t extremas_long[2];
     int32_t extremas_latt[2];
     double long_avg; 
     double latt_avg;
-    uint8_t num_of_waypoints;
 }geofence_t;
 
 typedef enum{
@@ -104,10 +69,8 @@ mavlink_heartbeat_t heartbeat;
 mavlink_global_position_int_t position;
 mavlink_attitude_t attitude;
 // MAVLINK commands
-mavlink_message_t request_stream, hover_mode, mission_mode, pause, unpause, correct, correct_resume, pico_heartbeat;
+mavlink_message_t request_stream, pause, unpause, correct, correct_resume, pico_heartbeat;
 const int32_t correct_alt = 50;
-// const enum PX4_CUSTOM_MAIN_MODE automatic = PX4_CUSTOM_MAIN_MODE_AUTO;
-// const enum PX4_CUSTOM_SUB_MODE_AUTO hover = PX4_CUSTOM_SUB_MODE_AUTO_LOITER, mission = PX4_CUSTOM_SUB_MODE_AUTO_MISSION;
 const uint8_t system_id = 1, component_id_mc = 200, component_id_fc = 1, chan = MAVLINK_COMM_2, UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
 // UART handling params
 volatile uint8_t byte;
@@ -120,8 +83,8 @@ core1_comms_t core0_instruction = RUNNING;
 volatile int32_t lattitude, longitude;
 volatile uint16_t heading;
 volatile float yaw;
-volatile bool ping = false;
 struct repeating_timer timer;
+bool ping = false;
 // Core 0 variables and flags (for safety)
 volatile bool wait = false, first_message = true, calculate = false, correcting = false, send_att = false; 
 
@@ -152,7 +115,7 @@ void core1_FIFO(){
     multicore_fifo_clear_irq();
 }
 
-void alarm_callback(__unused struct repeating_timer *t){
+bool alarm_callback(__unused struct repeating_timer *t){
     ping = true;
 }
 
@@ -250,15 +213,10 @@ void on_uart_rx(){
 void main(){
     init();
 
-    if (watchdog_enable_caused_reboot()) {
-        printf("Watchdog oopsie\n");
-        return 0;
-    }
-
     while(true){
         pico_set_led(true);
         sleep_ms(LED_DELAY_MS);
-        // watchdog_update();
+        watchdog_update();
         pico_set_led(false);
         sleep_ms(LED_DELAY_MS);
         watchdog_update();
@@ -323,7 +281,6 @@ void core1_entry(){
             send_mav(&correct_resume);
             break;
         }
-        
         if(ping){send_mav(&pico_heartbeat);}
     }
 }
@@ -331,6 +288,16 @@ void core1_entry(){
 void init(void){
     stdio_init_all();
     pico_led_init();
+    // Tells us if the watchdog timed out last time
+    if (watchdog_enable_caused_reboot() || watchdog_caused_reboot()) {
+        printf("Watchdog oopsie\n");
+    }
+
+    multicore_fifo_clear_irq();
+    irq_set_exclusive_handler(SIO_IRQ_PROC0, core0_FIFO);
+    irq_set_enabled(SIO_IRQ_PROC0, true);
+
+    multicore_launch_core1(core1_entry); // Launches the second core with its main function
 
     // Sets up UART registers
     uart_init(UART_ID, BAUD_RATE);
@@ -348,15 +315,10 @@ void init(void){
 
     // Now enable the UART to send interrupts - RX only
     uart_set_irq_enables(UART_ID, true, false);
-    
-    //Enables the watchdog timer at 1s delay
-    // watchdog_enable(1000, 1);
 
     // Defines the stop messages and the request datastream message
     mavlink_msg_command_long_pack(system_id, component_id_mc, &request_stream, system_id, component_id_fc, MAV_CMD_SET_MESSAGE_INTERVAL, (uint8_t)(0), (float)(MAVLINK_MSG_ID_GLOBAL_POSITION_INT), (float)(100000), (float)(0), (float)(0), (float)(0), (float)(0), (float)(1));
     mavlink_msg_heartbeat_pack((uint8_t)system_id, (uint8_t)component_id_mc, &pico_heartbeat, (uint8_t)MAV_TYPE_ONBOARD_CONTROLLER, (uint8_t)MAV_AUTOPILOT_INVALID, (uint8_t)MAV_MODE_FLAG_AUTO_ENABLED, (uint32_t)0, (uint8_t)MAV_STATE_ACTIVE);
-    // mavlink_msg_command_long_pack(system_id, component_id_mc, &hover_mode, system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)(0), (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_AUTO_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED | MAV_MODE_FLAG_STABILIZE_ENABLED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED), (float)(automatic), (float)(hover), (float)(0), (float)(0), (float)(0), (float)(0)); // https://mavlink.io/en/messages/common.html#mav_commands, https://mavlink.io/en/messages/common.html#MAV_STANDARD_MODE
-    // mavlink_msg_command_long_pack(system_id, component_id_mc, &mission_mode, system_id, component_id_fc, MAV_CMD_DO_SET_STANDARD_MODE, (uint8_t)(0), (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED | MAV_MODE_FLAG_AUTO_ENABLED | MAV_MODE_FLAG_GUIDED_ENABLED | MAV_MODE_FLAG_STABILIZE_ENABLED | MAV_MODE_FLAG_MANUAL_INPUT_ENABLED), (float)(automatic), (float)(mission), (float)(0), (float)(0), (float)(0), (float)(0)); 
     mavlink_msg_command_long_pack(system_id, component_id_mc, &pause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_FALSE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); // https://mavlink.io/en/messages/common.html#MAV_CMD_DO_PAUSE_CONTINUE 
     mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_TRUE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); 
     // mavlink_msg_command_long_pack(); // MAV_CMD_CONDITION_YAW 
@@ -367,9 +329,7 @@ void init(void){
         geofence.waypoints[i] = coords[i];
         geofence.latt_avg += geofence.waypoints[i].delta_lat_e7 / geofence.num_of_waypoints;
         geofence.long_avg += geofence.waypoints[i].phi_long_e7 / geofence.num_of_waypoints;
-        // watchdog_update();
     }
-
 
     for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){ // Corrects the soft geofence for offset which is defined at the beginning
         if(geofence.waypoints[i].delta_lat_e7 < geofence.latt_avg){
@@ -422,6 +382,7 @@ void send_mav(mavlink_message_t* msg){
 
 // Function which checks the coordinate and whether it lies in the defined geofence
 bool check_geofence(mavlink_global_position_int_t pos){
+    watchdog_update();
     int32_t pla = pos.lat, plo = pos.lon;
 
     // Bounding box check
@@ -468,7 +429,6 @@ void calculate_return_coords(int32_t lat, int32_t lon, uint16_t heading, float y
             avg_long[geof_prec + 1] = point_long;
             sec_min_squared_dist = square_dist;
         }
-        // watchdog_update();
     }
 
     for(uint32_t i = 2, j = (1 << geof_prec), f = 1; f <= (geof_prec); f++, j /= 2){ // This loop creates midpoints on a curve between the two waypoints via weighted averages and compares whether one of them isnt closer, precision defined by a parameter
@@ -481,7 +441,6 @@ void calculate_return_coords(int32_t lat, int32_t lon, uint16_t heading, float y
             avg_long[0] = avg_long[f];
             min_square_dist = square_dist;        
         }
-        // watchdog_update();
     }
 
     // Simple application of the original geofence offset to the coordinates, so the drone doesnt end up on the edge of the geofence
@@ -489,7 +448,9 @@ void calculate_return_coords(int32_t lat, int32_t lon, uint16_t heading, float y
     else{correct_latt = avg_latt[0] + geof_offset_deg;}
     if(geofence.long_avg < avg_long[0]){correct_long = avg_long[0] - geof_offset_deg;}
     else{correct_long = avg_long[0] + geof_offset_deg;}
+
     printf("\n%d, %d, Return coords\n", correct_latt, correct_long);
+
     // This information is packed into a MAVLink command interrupt GOTO and an unpause message is sent
     mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_OVERRIDE_GOTO, (uint8_t)(0), (float)(MAV_GOTO_DO_HOLD), (float)(MAV_GOTO_HOLD_AT_SPECIFIED_POSITION), (float)(MAV_FRAME_GLOBAL_INT), (float)(0), (float)(correct_latt), (float)(correct_long), (float)(correct_alt)); 
     send_mav(&unpause);
