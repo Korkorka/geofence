@@ -456,7 +456,7 @@ void calculate_return_coords(int32_t lat, int32_t lon, uint16_t heading, float y
 
     for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){ // This loop finds the two closest geofence waypoints by compaing squared distance in the spherical coordinate system
         int32_t point_latt = geofence.waypoints[i].delta_lat_e7, point_long = geofence.waypoints[i].phi_long_e7;
-        square_dist = sqrt(pow((point_latt - pos.lat), 2) + pow((point_long - pos.lon), 2));
+        square_dist = sqrt(pow((point_latt - lat), 2) + pow((point_long - lon), 2));
 
         if(square_dist < min_square_dist){
             avg_latt[0] = point_latt;
@@ -474,7 +474,7 @@ void calculate_return_coords(int32_t lat, int32_t lon, uint16_t heading, float y
     for(uint32_t i = 2, j = (1 << geof_prec), f = 1; f <= (geof_prec); f++, j /= 2){ // This loop creates midpoints on a curve between the two waypoints via weighted averages and compares whether one of them isnt closer, precision defined by a parameter
         avg_latt[f] = ((double)avg_latt[0] * j + (double)avg_latt[geof_prec + 1] * i) / (i + j);
         avg_long[f] = ((double)avg_long[0] * j + (double)avg_long[geof_prec + 1] * i) / (i + j);
-        square_dist = sqrt(pow((avg_latt[f] - pos.lat), 2) + pow((avg_long[f] - pos.lon), 2));
+        square_dist = sqrt(pow((avg_latt[f] - lat), 2) + pow((avg_long[f] - lon), 2));
 
         if(square_dist < min_square_dist){
             avg_latt[0] = avg_latt[f];
