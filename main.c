@@ -26,7 +26,7 @@
 
 // Definition for safe Geofence offset and calculation for the degree offset, approximates the offset as in cartesians
 #define geof_offset_m 1
-#define geof_prec 5
+#define geof_prec 9
 const double earth_approx_rad = 6371000;
 const int32_t geof_offset_deg = (int32_t)(((double)(geof_offset_m * 180) / (earth_approx_rad * M_PI)) * 1e7);
 
@@ -69,7 +69,7 @@ mavlink_heartbeat_t heartbeat;
 mavlink_global_position_int_t position;
 mavlink_attitude_t attitude;
 // MAVLINK commands
-mavlink_message_t request_stream, pause, unpause, correct, correct_resume, pico_heartbeat;
+mavlink_message_t request_stream, pause, unpause, correct, stream, correct_resume, pico_heartbeat;
 const int32_t correct_alt = 50;
 const uint8_t system_id = 1, component_id_mc = 200, component_id_fc = 1, chan = MAVLINK_COMM_2, UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
 // UART handling params
@@ -138,13 +138,8 @@ void on_uart_rx(){
                 multicore_fifo_push_blocking(SEND_STREAM_REQ);
             first_message = false;
             }
-            printf("ID %d, FCID %d\n", msg.msgid, msg.compid);
-            switch(msg.msgid){
-                case(MAVLINK_MSG_ID_HEARTBEAT): 
-                    mavlink_msg_heartbeat_decode(&msg, &heartbeat);
-                    watchdog_update();
-                    break;
-                
+            // printf("ID %d\n", msg.msgid);
+            switch(msg.msgid){                
                 case(MAVLINK_MSG_ID_GLOBAL_POSITION_INT):
                     mavlink_msg_global_position_int_decode(&msg, &position);
                     watchdog_update();
@@ -156,12 +151,7 @@ void on_uart_rx(){
                         correcting = true;
                         printf("\nOUTSIDE\n"); 
                     }
-                    printf("\nPosition recieved, %d, %d, %ud\n", position.lat, position.lon, position.hdg);
-                    break;
-                    
-                case(MAVLINK_MSG_ID_ATTITUDE):
-                    mavlink_msg_attitude_decode(&msg, &attitude);
-                    watchdog_update();
+                    printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
                     break;
 
                 case(MAVLINK_MSG_ID_COMMAND_ACK):
@@ -192,17 +182,7 @@ void on_uart_rx(){
                                 correcting = false;
                             }
                             break;
-                        
-                        case(MAV_CMD_SET_MESSAGE_INTERVAL):
-                        printf("Stream Accknowledged\n");
-                            if(ack.result == MAV_RESULT_ACCEPTED){
-                                printf("Stream Success\n");
-                            }
-                            break;
-                        case(MAV_CMD_COMPONENT_ARM_DISARM):
-                            printf("Ack\n");
-                            break;
-                        }
+                    }
                 }
                 break;
             }
@@ -321,6 +301,7 @@ void init(void){
     mavlink_msg_heartbeat_pack((uint8_t)system_id, (uint8_t)component_id_mc, &pico_heartbeat, (uint8_t)MAV_TYPE_ONBOARD_CONTROLLER, (uint8_t)MAV_AUTOPILOT_INVALID, (uint8_t)MAV_MODE_FLAG_AUTO_ENABLED, (uint32_t)0, (uint8_t)MAV_STATE_ACTIVE);
     mavlink_msg_command_long_pack(system_id, component_id_mc, &pause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_FALSE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); // https://mavlink.io/en/messages/common.html#MAV_CMD_DO_PAUSE_CONTINUE 
     mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_TRUE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); 
+    mavlink_msg_request_data_stream_pack(system_id, component_id_mc, &stream, system_id, component_id_fc, MAV_DATA_STREAM_ALL, (uint16_t)10, (uint8_t)1);
     // mavlink_msg_command_long_pack(); // MAV_CMD_CONDITION_YAW 
 
     geofence.waypoints = malloc(geofence.num_of_waypoints * sizeof(coords_t)); // Allocates pointer memory to the waypoints data in the geofence struct
@@ -405,6 +386,7 @@ bool check_geofence(mavlink_global_position_int_t pos){
     bool check = true;
     if(intercepts % 2){check = false;}
 
+    if(check){printf("IN\n");}
     return check;
 }
 
