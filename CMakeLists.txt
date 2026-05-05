@@ -46,6 +46,10 @@ target_link_libraries(main
     pico_stdlib
     hardware_watchdog
     pico_multicore
+    hardware_timer
+    hardware_gpio
+    hardware_irq
+    hardware_uart
  )
 
 
