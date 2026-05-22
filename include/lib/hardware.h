@@ -19,6 +19,8 @@ typedef enum{
     CALCULATE_RETURN,
     SEND_RESUME,
     SEND_UNPAUSE,
+    REQUEST_FENCE,
+    SETUP_GEOFENCE,
 }core0_comms_t;
 
 typedef enum{
@@ -27,7 +29,15 @@ typedef enum{
     BOOL_INCOMMING, // Reserved for if I decide to delegate the geofence check to Core 1
 }core1_comms_t;
 
+typedef enum{
+    PAUSE_SENDING = 1,
+    RETURN_CALCULATING,
+    SENDING_RESUME,
+    SENDING_UNPAUSE,
+    REQUESTING_MISSION,
+    SETTING_UP_GEOFENCE,
+}debugging_feedback_t;
+
 int pico_led_init(void);
 void pico_set_led(bool);
 void send_mav(mavlink_message_t*);
-void usart_init(void);

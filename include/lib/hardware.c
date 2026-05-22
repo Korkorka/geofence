@@ -40,25 +40,3 @@ void send_mav(mavlink_message_t* msg){
     uint16_t len = mavlink_msg_to_send_buffer(tx_arr, msg);
     uart_write_blocking(UART_ID, tx_arr, len);
 }
-
-void usart_init(void){
-    stdio_init_all();
-    pico_led_init();
-    // // Tells us if the watchdog timed out last time
-    // if (watchdog_enable_caused_reboot() || watchdog_caused_reboot()) {
-    //     printf("Watchdog oopsie\n");
-    // }
-
-    // Sets up UART registers
-    uart_init(UART_ID, BAUD_RATE);
-    uart_set_hw_flow(UART_ID, false, false);
-    uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
-    uart_set_fifo_enabled(UART_ID, true);
-
-    // Set the TX and RX pins by using the function select on the GPIO
-    gpio_set_function(UART_TX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_TX_PIN));
-    gpio_set_function(UART_RX_PIN, UART_FUNCSEL_NUM(UART_ID, UART_RX_PIN));
-
-    // Now enable the UART to send interrupts - RX only
-    uart_set_irq_enables(UART_ID, true, false);
-}
