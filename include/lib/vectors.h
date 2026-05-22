@@ -43,4 +43,4 @@ vect3D_t vect_add(vect3D_t, vect3D_t);
 void vect_multiply(vect3D_t *, double);
 void vect_normalize(vect3D_t *);
 coords_t euclid_to_spherical(vect3D_t);
-vect3D_t cross_prod(vect3D_t. vect3D_t);
+vect3D_t cross_prod(vect3D_t, vect3D_t);

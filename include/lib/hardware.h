@@ -16,10 +16,9 @@ typedef enum{
     IDLE = 0,
     SEND_STREAM_REQ,
     SEND_PAUSE,
-    SENDING_COORDS,
     CALCULATE_RETURN,
-    SEND_CORRECTION,
     SEND_RESUME,
+    SEND_UNPAUSE,
 }core0_comms_t;
 
 typedef enum{

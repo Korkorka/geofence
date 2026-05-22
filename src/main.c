@@ -39,7 +39,7 @@ core1_comms_t core0_instruction = RUNNING;
 // Core 1 variables and flags (for safety)
 volatile int32_t lattitude, longitude;
 struct repeating_timer timer;
-bool ping = false;
+volatile bool ping = false;
 // Core 0 variables and flags (for safety)
 volatile bool wait = false, first_message = true, calculate = false, correcting = false; 
 
@@ -56,10 +56,9 @@ void calculate_return(int32_t, int32_t);
 void core1_FIFO(){
     while(multicore_fifo_rvalid()){
         core1_instruction = multicore_fifo_pop_blocking();
-        if(core1_instruction == SENDING_COORDS){
+        if(core1_instruction == CALCULATE_RETURN){
             lattitude = multicore_fifo_pop_blocking();
             longitude = multicore_fifo_pop_blocking();
-            core1_instruction = IDLE;
         }                
     }
     multicore_fifo_clear_irq();
@@ -86,7 +85,7 @@ void on_uart_rx(){
         if(mavlink_parse_char(chan, byte, &msg, &status)){
             if(first_message){
                 multicore_fifo_push_blocking(SEND_STREAM_REQ);
-            first_message = false;
+                first_message = false;
             }
             // printf("ID %d\n", msg.msgid);
             switch(msg.msgid){                
@@ -97,7 +96,6 @@ void on_uart_rx(){
                     if(!(check_geofence(position)) && !correcting){
                         multicore_fifo_push_blocking(SEND_PAUSE);
                         calculate = true;
-                        wait = true;
                         correcting = true;
                         printf("\nOUTSIDE\n"); 
                     }
@@ -111,21 +109,21 @@ void on_uart_rx(){
                         case(MAV_CMD_DO_PAUSE_CONTINUE):
                             if(ack.result == MAV_RESULT_ACCEPTED){
                                 printf("\nPause recieved\n");
-                                if(wait){
-                                    wait = false;
-                                }
-                                else if(!wait){
-                                    multicore_fifo_push_blocking(SEND_CORRECTION);
-                                    wait = true;
-                                }
                             }
                             break;
 
+                        case(MAV_CMD_CONDITION_YAW):
+                            if(ack.result == MAV_RESULT_ACCEPTED){
+                                    printf("\nYaw correction acknowledged\n");
+                                    multicore_fifo_push_blocking(SEND_UNPAUSE);
+                                    wait = true;
+                                }
+                                break;
+                            
                         case(MAV_CMD_OVERRIDE_GOTO):
                             if(ack.result == MAV_RESULT_ACCEPTED && wait){
                                 multicore_fifo_push_blocking(SEND_RESUME);
                                 wait = false;
-
                                 printf("\nGOTO recieved\n");
                             }
                             else if(ack.result == MAV_RESULT_ACCEPTED && !wait){
@@ -151,11 +149,15 @@ void main(){
         sleep_ms(LED_DELAY_MS);
         watchdog_update();
         if(calculate){
-            sleep_ms(1000);
-            multicore_fifo_push_blocking(SENDING_COORDS);
-            multicore_fifo_push_blocking(position.lat);
-            multicore_fifo_push_blocking(position.lon); // MAV_CMD_CONDITION_YAW 
+
+            sleep_ms(500);
+            watchdog_update();
+            sleep_ms(500);
+            watchdog_update();
+
             multicore_fifo_push_blocking(CALCULATE_RETURN);
+            multicore_fifo_push_blocking(position.lat);
+            multicore_fifo_push_blocking(position.lon);
             calculate = false;
         }
     }   
@@ -188,17 +190,18 @@ void core1_entry(){
 
             case(CALCULATE_RETURN):
             core1_instruction = IDLE;
-            calculate_return_coords(lattitude, longitude);
-            break;
-
-            case(SEND_CORRECTION):
-            core1_instruction = IDLE;
-            send_mav(&correct);
+            calculate_return(lattitude, longitude);
             break;
 
             case(SEND_RESUME):
             core1_instruction = IDLE;
             send_mav(&correct_resume);
+            break;
+
+            case(SEND_UNPAUSE):
+            core1_instruction = IDLE;
+            send_mav(&unpause);
+            send_mav(&correct);
             break;
         }
         if(ping){send_mav(&pico_heartbeat);}
@@ -227,7 +230,6 @@ void init(void){
     mavlink_msg_heartbeat_pack(system_id, component_id_mc, &pico_heartbeat, MAV_TYPE_ONBOARD_CONTROLLER, (uint8_t)MAV_AUTOPILOT_INVALID, (uint8_t)MAV_MODE_FLAG_AUTO_ENABLED, (uint32_t)0, (uint8_t)MAV_STATE_ACTIVE);
     mavlink_msg_command_long_pack(system_id, component_id_mc, &pause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_FALSE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); // https://mavlink.io/en/messages/common.html#MAV_CMD_DO_PAUSE_CONTINUE 
     mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_TRUE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); 
-    // mavlink_msg_command_long_pack(); // MAV_CMD_CONDITION_YAW 
 
     geofence.waypoints = malloc(geofence.num_of_waypoints * sizeof(coords_t)); // Allocates pointer memory to the waypoints data in the geofence struct
 
@@ -287,10 +289,9 @@ bool check_geofence(mavlink_global_position_int_t pos){
 
 
 // Proposed function, to let the drone wait after pause, and calculate some manner of valid return coordinate into the geofence before mission continuation
-void calculate_return_coords(int32_t lat, int32_t lon){
-    watchdog_update();
+void calculate_return(int32_t lat, int32_t lon){
     double min_dist = UINT64_MAX, dist, proj_const;
-    coords_t point = {lat, lon}, centre = {geofence.latt_avg, geofence.long_avg}, return_coords, return_coords_offset, correct, correct_offset;
+    coords_t point = {lat, lon}, centre = {geofence.latt_avg, geofence.long_avg}, return_coords, return_coords_offset, correct_coords, correct_offset;
     vect3D_t A, B, P, AB, AP, C, EC, E;
 
     for(uint8_t i = 0, j = geofence.num_of_waypoints - 1; i < geofence.num_of_waypoints; j = i++){
@@ -316,28 +317,24 @@ void calculate_return_coords(int32_t lat, int32_t lon){
 
         dist = distance(return_coords, point);
 
-        watchdog_update();
         if(dist < min_dist){
             correct_offset = return_coords_offset; 
-            correct = return_coords;
+            correct_coords = return_coords;
             min_dist = dist;
         }
     }
 
-        vect3D_t PC = vect_subtract(C, P), Up = P;
-    vect_normalize(&PC);
+    vect3D_t Up = P, Z = {0, 0, 1};
     vect_normalize(&Up);
-    double vect_prod_complement = (P.x) * (-P.x) + (P.y) * (-P.y);
-    double z = (-vect_prod_complement) / P.z;
-    vect3D_t Yaw0 = {-P.x, -P.y, z};
-    vect_normalize(&Yaw0);
-    double correct_yaw = vect_angle(Yaw0, PC);
-
-    if(geofence.long_avg < lon){correct_yaw = -correct_yaw;}
+    vect3D_t East = cross_prod(Up, Z);
+    vect_normalize(&East);
+    vect3D_t North = cross_prod(East, Up);
+    vect_normalize(&North);
+    vect3D_t PC = vect_subtract(C, P), East_comp = East, North_comp = North;
+    float correct_yaw = (float)atan2(dot(PC, East), dot(PC, North));
 
     // This information is packed into a MAVLink command interrupt GOTO and an unpause message is sent
     mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_OVERRIDE_GOTO, (uint8_t)(0), (float)(MAV_GOTO_DO_HOLD), (float)(MAV_GOTO_HOLD_AT_SPECIFIED_POSITION), (float)(MAV_FRAME_GLOBAL_INT), (float)(0), (float)(correct_offset.latt_e7), (float)(correct_offset.long_e7), (float)(correct_alt)); 
     mavlink_msg_command_long_pack(system_id, component_id_mc, &change_yaw, system_id, component_id_fc, MAV_CMD_CONDITION_YAW, (uint8_t)(0), (float)(correct_yaw), (float)(180), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0));
     send_mav(&change_yaw);
-    send_mav(&unpause);
 }
