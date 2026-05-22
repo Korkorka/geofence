@@ -292,7 +292,7 @@ bool check_geofence(mavlink_global_position_int_t pos){
 void calculate_return(int32_t lat, int32_t lon){
     double min_dist = UINT64_MAX, dist, proj_const;
     coords_t point = {lat, lon}, centre = {geofence.latt_avg, geofence.long_avg}, return_coords, return_coords_offset, correct_coords, correct_offset;
-    vect3D_t A, B, P, AB, AP, C, EC, E;
+    vect3D_t A, B, P, AB, AP, C, EC, E, E_corr;
 
     for(uint8_t i = 0, j = geofence.num_of_waypoints - 1; i < geofence.num_of_waypoints; j = i++){
         A = spherical_to_euclid(geofence.waypoints[j]);
@@ -318,6 +318,7 @@ void calculate_return(int32_t lat, int32_t lon){
         dist = distance(return_coords, point);
 
         if(dist < min_dist){
+            E_corr = E;
             correct_offset = return_coords_offset; 
             correct_coords = return_coords;
             min_dist = dist;
@@ -326,12 +327,12 @@ void calculate_return(int32_t lat, int32_t lon){
 
     vect3D_t Up = P, Z = {0, 0, 1};
     vect_normalize(&Up);
-    vect3D_t East = cross_prod(Up, Z);
+    vect3D_t East = cross_prod(Z, Up);
     vect_normalize(&East);
-    vect3D_t North = cross_prod(East, Up);
+    vect3D_t North = cross_prod(Up, East);
     vect_normalize(&North);
-    vect3D_t PC = vect_subtract(C, P), East_comp = East, North_comp = North;
-    float correct_yaw = (float)atan2(dot(PC, East), dot(PC, North));
+    vect3D_t PE = vect_subtract(E_corr, P), East_comp = East, North_comp = North;
+    float correct_yaw = RAD2DEG((float)atan2(dot(PE, East), dot(PE, North)));
 
     // This information is packed into a MAVLink command interrupt GOTO and an unpause message is sent
     mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_OVERRIDE_GOTO, (uint8_t)(0), (float)(MAV_GOTO_DO_HOLD), (float)(MAV_GOTO_HOLD_AT_SPECIFIED_POSITION), (float)(MAV_FRAME_GLOBAL_INT), (float)(0), (float)(correct_offset.latt_e7), (float)(correct_offset.long_e7), (float)(correct_alt)); 
