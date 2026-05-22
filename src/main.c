@@ -324,7 +324,14 @@ void calculate_return_coords(int32_t lat, int32_t lon){
         }
     }
 
-
+        vect3D_t PC = vect_subtract(C, P), Up = P;
+    vect_normalize(&PC);
+    vect_normalize(&Up);
+    double vect_prod_complement = (P.x) * (-P.x) + (P.y) * (-P.y);
+    double z = (-vect_prod_complement) / P.z;
+    vect3D_t Yaw0 = {-P.x, -P.y, z};
+    vect_normalize(&Yaw0);
+    double correct_yaw = vect_angle(Yaw0, PC);
 
     if(geofence.long_avg < lon){correct_yaw = -correct_yaw;}
 
