@@ -10,11 +10,17 @@
         },
         "debug": {
             "statusBarVisibility": "hidden"
+        },
+        "variant": {
+            "statusBarVisibility": "compact",
+        },
+        "buildTarget": {
+            "statusBarVisibility": "visible",
         }
     },
     "cmake.configureOnEdit": true,
     "cmake.automaticReconfigure": true,
-    "cmake.configureOnOpen": true,
+    "cmake.configureOnOpen": false,
     "cmake.generator": "Ninja",
     "cmake.cmakePath": "${userHome}/.pico-sdk/cmake/v3.31.5/bin/cmake",
     "C_Cpp.debugShortcut": false,
@@ -36,18 +42,5 @@
     "raspberry-pi-pico.cmakeAutoConfigure": false,
     "raspberry-pi-pico.useCmakeTools": true,
     "raspberry-pi-pico.cmakePath": "${HOME}/.pico-sdk/cmake/v3.31.5/bin/cmake",
-    "raspberry-pi-pico.ninjaPath": "${HOME}/.pico-sdk/ninja/v1.12.1/ninja",
-    "python.languageServer": "Pylance",
-    "python.analysis.typeCheckingMode": "basic",
-    "python.analysis.diagnosticSeverityOverrides": {
-        "reportMissingModuleSource": "none"
-    },
-    "python.terminal.activateEnvironment": false,
-    "micropico.openOnStart": true,
-    "python.analysis.typeshedPaths": [
-        "~/.micropico-stubs/included"
-    ],
-    "python.analysis.extraPaths": [
-        "~/.micropico-stubs/included"
-    ]
+    "raspberry-pi-pico.ninjaPath": "${HOME}/.pico-sdk/ninja/v1.12.1/ninja"
 }

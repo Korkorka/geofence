@@ -18,4 +18,31 @@ if (PICO_CYW43_SUPPORTED)
     target_link_libraries(hardware PUBLIC pico_cyw43_arch_none)
 endif()
 
-target_include_directories(hardware PUBLIC "${CMAKE_CURRENT_LIST_DIR}")
+
+target_include_directories(hardware PUBLIC "${CMAKE_CURRENT_LIST_DIR}/lib"
+    "${CMAKE_CURRENT_LIST_DIR}/mavlink"
+)
+
+add_library(coords "lib/coords.c")
+
+target_link_libraries(coords PUBLIC 
+    pico_stdlib
+    hardware_watchdog
+    pico_multicore
+    hardware_timer
+    hardware_gpio
+    hardware_irq
+    hardware_uart
+    m
+
+    vectors
+    hardware
+)
+
+if (PICO_CYW43_SUPPORTED)
+    target_link_libraries(coords PUBLIC pico_cyw43_arch_none)
+endif()
+
+target_include_directories(coords PUBLIC "${CMAKE_CURRENT_LIST_DIR}/lib"
+    "${CMAKE_CURRENT_LIST_DIR}/mavlink"
+)

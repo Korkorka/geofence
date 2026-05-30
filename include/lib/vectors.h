@@ -1,3 +1,5 @@
+#pragma once
+
 // C common libraries
 #include <stdio.h>
 #include <math.h>
@@ -15,6 +17,7 @@
 typedef struct{ // Coordinate struct with latt and long expressed multplied by 1e7
     int32_t latt_e7;
     int32_t long_e7;
+    float yaw;
 }coords_t; 
 
 typedef struct{ // Geofence struct with adaptive sizing

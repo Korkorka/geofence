@@ -1,3 +1,5 @@
+#pragma once
+
 // UART and MAVLink setup + LED blink
 #define UART_ID uart0
 #define BAUD_RATE 115200
@@ -8,9 +10,9 @@
 #define UART_RX_PIN 1
 #define LED_DELAY_MS 250
 
-#include <mavlink/common/mavlink.h>
-#include <mavlink/minimal/mavlink.h>
-#include <mavlink/standard/mavlink.h>
+#include <common/mavlink.h>
+#include <minimal/mavlink.h>
+#include <standard/mavlink.h>
 
 typedef enum{
     IDLE = 0,

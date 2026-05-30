@@ -8,9 +8,9 @@
 #include <math.h>
 #include <stdlib.h>
 // Mavlink libraries
-#include <mavlink/common/mavlink.h>
-#include <mavlink/minimal/mavlink.h>
-#include <mavlink/standard/mavlink.h>
+#include <common/mavlink.h>
+#include <minimal/mavlink.h>
+#include <standard/mavlink.h>
 // Custom Libraries
 #include "hardware.h"
 

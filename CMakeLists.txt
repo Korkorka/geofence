@@ -41,7 +41,7 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 add_executable(main "${MY_SOURCES}")
 
-target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include/")
+target_include_directories(main PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 
 # pull in common dependencies
 target_link_libraries(main
@@ -54,10 +54,8 @@ target_link_libraries(main
     hardware_uart
     m
 
-    vectors
-    hardware
+    coords
 )
-
 
 if (PICO_CYW43_SUPPORTED)
     target_link_libraries(main pico_cyw43_arch_none)
