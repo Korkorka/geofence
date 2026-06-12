@@ -60,7 +60,6 @@ bool check_geofence(geofence_t* geofence, mavlink_global_position_int_t pos){
         if(((pos.lon < geofence->waypoints[i].long_e7) != (pos.lon < geofence->waypoints[j].long_e7)) && (pos.lat < (int32_t)round(((double)(geofence->waypoints[i].latt_e7 - geofence->waypoints[j].latt_e7) / (double)(geofence->waypoints[i].long_e7 - geofence->waypoints[j].long_e7)) * (double)(pos.lon - geofence->waypoints[i].long_e7) + (double)geofence->waypoints[i].latt_e7))){
             inside = !inside;
         }
-    
     }
     return inside;
 }
