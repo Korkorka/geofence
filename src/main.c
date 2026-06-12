@@ -52,7 +52,7 @@ volatile bool wait = false, first_message = true, calculate = false, correcting 
 
 // Coords setup + geofence as a global variable
 coords_t * mission_coords;
-coords_t geofence_coords[] = {{549228230, 98164190}, {549230240, 98163540}, {549230600, 98168310}, {549228600, 98167910}};
+coords_t geofence_coords[] = {{549227908, 98168756}, {549231019, 98168033}, {549230972, 98165858}, {549227828, 98166772}};
 geofence_t geofence = {sizeof(geofence_coords)/sizeof(coords_t), NULL, {INT32_MAX, INT32_MIN}, {INT32_MAX, INT32_MIN}, 0, 0};
 
 // Function prototypes
@@ -99,7 +99,7 @@ void on_uart_rx(){
                 multicore_fifo_push_blocking(SEND_STREAM_REQ);
                 first_message = false;
             }
-            // printf("ID %d\n", msg.msgid);
+            printf("ID %d\n", msg.msgid);
             switch(msg.msgid){                
                 case(MAVLINK_MSG_ID_GLOBAL_POSITION_INT):
                     mavlink_msg_global_position_int_decode(&msg, &position);
@@ -109,9 +109,9 @@ void on_uart_rx(){
                         multicore_fifo_push_blocking(SEND_PAUSE);
                         calculate = true;
                         correcting = true;
-                        printf("\nOUTSIDE\n"); 
+                        // printf("\nOUTSIDE\n"); 
                     }
-                    printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
+                    // printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
                     break;
 
                 case(MAVLINK_MSG_ID_MISSION_COUNT):
@@ -121,10 +121,10 @@ void on_uart_rx(){
                     multicore_fifo_push_blocking(mission_count.count);
                 break;
 
-                case(MAVLINK_MSG_ID_ATTITUDE):
-                    mavlink_msg_attitude_decode(&msg, &attitude); 
-                    watchdog_update();
-                break;
+                // case(MAVLINK_MSG_ID_ATTITUDE):
+                //     mavlink_msg_attitude_decode(&msg, &attitude); 
+                //     watchdog_update();
+                // break;
 
                 case(MAVLINK_MSG_ID_MISSION_ITEM_INT):
                     mavlink_msg_mission_item_int_decode(&msg, &mission_item);
@@ -151,20 +151,20 @@ void on_uart_rx(){
 
                         case(MAV_CMD_CONDITION_YAW):
                         printf("\nYaw correction acknowledged, %d\n", ack.result);
-                            if(ack.result == MAV_RESULT_ACCEPTED){
+                            // if(ack.result == MAV_RESULT_ACCEPTED){
                                     multicore_fifo_push_blocking(SEND_UNPAUSE);
                                     wait = true;
-                                }
+                                // }
                             break;
                             
                         case(MAV_CMD_OVERRIDE_GOTO):
                         printf("\nGOTO recieved, %d\n", ack.result);
-                            if(ack.result == MAV_RESULT_ACCEPTED && wait){
+                            if(wait){
                                 multicore_fifo_push_blocking(SEND_RESUME);
                                 wait = false;
                                 printf("\nGOTO recieved\n");
                             }
-                            else if(ack.result == MAV_RESULT_ACCEPTED && !wait){
+                            else if( !wait){
                                 correcting = false;
                             }
                             break;
@@ -186,7 +186,6 @@ bool test_fired = false;
 
 void main(){
     init();
-    sleep_ms(3000);
 
     while(true){
         pico_set_led(true);
@@ -201,13 +200,12 @@ void main(){
             multicore_fifo_push_blocking(test_position.lon);
             calculate = false;
         }
-
-        if(!test_fired){
-            multicore_fifo_push_blocking(SEND_PAUSE);
-            calculate = true;
-            correcting = true;
-            test_fired = true; 
-        }
+        // if(!test_fired){
+        //     multicore_fifo_push_blocking(SEND_PAUSE);
+        //     calculate = true;
+        //     correcting = true;
+        //     test_fired = true; 
+        // }
     }   
 
     free(geofence.waypoints);
