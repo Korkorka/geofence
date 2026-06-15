@@ -108,9 +108,10 @@ void on_uart_rx(){
                         multicore_fifo_push_blocking(SEND_PAUSE);
                         calculate = true;
                         correcting = true;
-                        // printf("\n\n\n\n\n\n\n\n\nOUTSIDE\nOUTSIDE\nOUTSIDE\nOUTSIDE\n\n\n\n\n\n\n\n\n\n\n"); 
+                        printf("\n\n\n\n\n\n\n\n\nOUTSIDE\nOUTSIDE\nOUTSIDE\nOUTSIDE\n\n\n\n\n\n\n\n\n\n\n");
+                        // printf("OUTSIDE\n");
                     }
-                    // printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
+                    printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
                     break;
  
                 case(MAVLINK_MSG_ID_MISSION_COUNT):
@@ -181,14 +182,14 @@ void main(){
         pico_set_led(false);
         sleep_ms(LED_DELAY_MS);
         watchdog_update();
-        // if(calculate){
-        //     multicore_fifo_push_blocking(CALCULATE_RETURN);
-        //     multicore_fifo_push_blocking(position.lat);
-        //     multicore_fifo_push_blocking(position.lon);
-        //     calculate = false;
-        // }
-        sleep_ms(5000);
-        multicore_fifo_push_blocking(CALCULATE_RETURN);
+        if(calculate){
+            multicore_fifo_push_blocking(CALCULATE_RETURN);
+            multicore_fifo_push_blocking(position.lat);
+            multicore_fifo_push_blocking(position.lon);
+            calculate = false;
+        }
+        // sleep_ms(5000);
+        // multicore_fifo_push_blocking(CALCULATE_RETURN);
         // if(!test_fired){
         //     multicore_fifo_push_blocking(SEND_PAUSE);
         //     calculate = true;
@@ -225,7 +226,7 @@ void core1_entry(){
             alt_check = RETURN_CALCULATING;
             core1_instruction = IDLE;
             correct_coords = calculate_return(&geofence, lattitude, longitude);
-            mavlink_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(NAN), (float)(correct_coords.latt_e7), (float)(correct_coords.long_e7), (float)(correct_alt));
+            mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(NAN), (float)(correct_coords.latt_e7), (float)(correct_coords.long_e7), (float)(correct_alt));
             mavlink_msg_command_long_pack(system_id, component_id_mc, &change_yaw, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(correct_coords.yaw), (float)(lattitude), (float)(longitude), (float)(correct_alt));
             send_mav(&change_yaw);
             send_mav(&unpause);
