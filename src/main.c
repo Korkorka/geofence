@@ -112,7 +112,7 @@ void on_uart_rx(){
                     }
                     // printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
                     break;
-
+ 
                 case(MAVLINK_MSG_ID_MISSION_COUNT):
                     mavlink_msg_mission_count_decode(&msg, &mission_count);
                     watchdog_update();
@@ -147,16 +147,8 @@ void on_uart_rx(){
                             // }
                             break;
 
-                        case(MAV_CMD_CONDITION_YAW):
-                        printf("\nYaw correction acknowledged, %d\n", ack.result);
-                            if(ack.result == MAV_RESULT_ACCEPTED){
-                                    multicore_fifo_push_blocking(SEND_UNPAUSE);
-                                    wait = true;
-                                }
-                            break;
-                            
-                        case(MAV_CMD_OVERRIDE_GOTO):
-                        printf("\nGOTO acknowledged, %d\n", ack.result);
+                        case(MAV_CMD_DO_REPOSITION):
+                        printf("\nReposition acknowledged, %d\n", ack.result);
                             if(ack.result == MAV_RESULT_ACCEPTED && wait == true){
                                 multicore_fifo_push_blocking(SEND_RESUME);
                                 correcting = false;
