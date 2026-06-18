@@ -46,9 +46,8 @@ struct repeating_timer timer;
 volatile bool ping = false, change = false;
 mavlink_message_t sys_status;
 coords_t correct_coords;
-int32_t alt_check;
 // Core 0 variables and flags (for safety)
-volatile bool wait = false, first_message = true, calculate = false, correcting = false; 
+volatile bool outside = false, first_message = true, calculate = false; 
 
 // Coords setup + geofence as a global variable
 coords_t * mission_coords;
@@ -104,14 +103,20 @@ void on_uart_rx(){
                     mavlink_msg_global_position_int_decode(&msg, &position);
                     watchdog_update();
 
-                    if(!(check_geofence(&geofence, position)) && !correcting){
+                    if(!(check_geofence(&geofence, position)) && !outside){
                         multicore_fifo_push_blocking(SEND_PAUSE);
                         calculate = true;
-                        correcting = true;
-                        printf("\n\n\n\n\n\n\n\n\nOUTSIDE\nOUTSIDE\nOUTSIDE\nOUTSIDE\n\n\n\n\n\n\n\n\n\n\n");
+                        outside = true;
+                        printf("\n\n\n\n\n\n\nOUTSIDE\nOUTSIDE\nOUTSIDE\nOUTSIDE\n\n\n\n\n\n\n\n\n");
                         // printf("OUTSIDE\n");
                     }
-                    printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
+                    else if(check_geofence(&geofence, position) && outside){
+                        printf("\n\n\n\nBack Inside\n\n\n\n");
+                        outside = false;
+                        multicore_fifo_push_blocking(SEND_UNPAUSE);
+                    }
+
+                    // printf("\nPosition recieved, %d, %d, %u\n", position.lat, position.lon, position.hdg);
                     break;
  
                 case(MAVLINK_MSG_ID_MISSION_COUNT):
@@ -120,11 +125,6 @@ void on_uart_rx(){
                     multicore_fifo_push_blocking(REQUEST_FENCE);
                     multicore_fifo_push_blocking(mission_count.count);
                 break;
-
-                // case(MAVLINK_MSG_ID_ATTITUDE):
-                //     mavlink_msg_attitude_decode(&msg, &attitude); 
-                //     watchdog_update();
-                // break;
 
                 case(MAVLINK_MSG_ID_MISSION_ITEM_INT):
                     mavlink_msg_mission_item_int_decode(&msg, &mission_item);
@@ -141,20 +141,14 @@ void on_uart_rx(){
                 case(MAVLINK_MSG_ID_COMMAND_ACK):
                     mavlink_msg_command_ack_decode(&msg, &ack);
                     watchdog_update();
+
                     switch(ack.command){
-                        case(MAV_CMD_DO_PAUSE_CONTINUE):
-                        printf("\nPause recieved, %d\n", ack.result);
-                            // if(ack.result == MAV_RESULT_ACCEPTED){
-                            // }
+                        case(MAV_CMD_DO_SET_MODE):
+                            printf("\nMode change recieved, %d\n", ack.result);
                             break;
 
                         case(MAV_CMD_DO_REPOSITION):
-                        printf("\nReposition acknowledged, %d\n", ack.result);
-                            if(ack.result == MAV_RESULT_ACCEPTED && wait == true){
-                                multicore_fifo_push_blocking(SEND_RESUME);
-                                correcting = false;
-                                wait = false;
-                            }
+                            printf("\nReposition acknowledged, %d\n", ack.result);
                             break;
                     
                     }
@@ -193,7 +187,6 @@ void main(){
         // if(!test_fired){
         //     multicore_fifo_push_blocking(SEND_PAUSE);
         //     calculate = true;
-        //     correcting = true;
         //     test_fired = true; 
         // }
     }   
@@ -212,48 +205,33 @@ void core1_entry(){
         switch(core1_instruction){
             case(SEND_STREAM_REQ):
             core1_instruction = IDLE;
-            send_mav(&request_stream);
             send_mav(&mission_list_req);
             break;
 
             case(SEND_PAUSE):
-            alt_check = PAUSE_SENDING;
             core1_instruction = IDLE;
             send_mav(&pause);
+            sleep_ms(3000);
             break;
 
             case(CALCULATE_RETURN):
-            alt_check = RETURN_CALCULATING;
             core1_instruction = IDLE;
             correct_coords = calculate_return(&geofence, lattitude, longitude);
-            mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(NAN), (float)(correct_coords.latt_e7), (float)(correct_coords.long_e7), (float)(correct_alt));
-            mavlink_msg_command_long_pack(system_id, component_id_mc, &change_yaw, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(correct_coords.yaw), (float)(lattitude), (float)(longitude), (float)(correct_alt));
-            send_mav(&change_yaw);
-            send_mav(&unpause);
+            mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(correct_coords.yaw), (float)(correct_coords.latt_e7), (float)(correct_coords.long_e7), (float)(correct_alt));
             send_mav(&correct);
             change = true; 
             break;
 
-            case(SEND_RESUME):
-            alt_check = SENDING_RESUME;
-            core1_instruction = IDLE;
-            send_mav(&correct_resume);
-            break;
-
             case(SEND_UNPAUSE):
-            alt_check = SENDING_UNPAUSE;
             core1_instruction = IDLE;
             send_mav(&unpause);
-            send_mav(&correct);
             break;
 
             case(REQUEST_FENCE):
-            alt_check = REQUESTING_MISSION;
             core1_instruction = IDLE;
             break;
 
             case(SETUP_GEOFENCE):
-            alt_check = SETTING_UP_GEOFENCE;
             core1_instruction = IDLE;
             // geofence_setup(&geofence);
             break;
@@ -295,10 +273,10 @@ void init(void){
     uart_set_irq_enables(UART_ID, true, false);
 
     // Defines the stop messages and the request datastream message
-    mavlink_msg_command_long_pack(system_id, component_id_mc, &request_stream, system_id, component_id_fc, MAV_CMD_SET_MESSAGE_INTERVAL, (uint8_t)(0), (float)(MAVLINK_MSG_ID_GLOBAL_POSITION_INT), (float)(100000), (float)(0), (float)(0), (float)(0), (float)(0), (float)(1));
+    // mavlink_msg_command_long_pack(system_id, component_id_mc, &request_stream, system_id, component_id_fc, MAV_CMD_SET_MESSAGE_INTERVAL, (uint8_t)(0), (float)(MAVLINK_MSG_ID_GLOBAL_POSITION_INT), (float)(100000), (float)(0), (float)(0), (float)(0), (float)(0), (float)(1));
     mavlink_msg_heartbeat_pack( system_id, component_id_mc, &pico_heartbeat, MAV_TYPE_ONBOARD_CONTROLLER, (uint8_t)MAV_AUTOPILOT_INVALID, (uint8_t)MAV_MODE_FLAG_AUTO_ENABLED, (uint32_t)0, (uint8_t)MAV_STATE_ACTIVE);
-    mavlink_msg_command_long_pack(system_id, component_id_mc, &pause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_FALSE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); // https://mavlink.io/en/messages/common.html#MAV_CMD_DO_PAUSE_CONTINUE 
-    mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause, system_id, component_id_fc, MAV_CMD_DO_PAUSE_CONTINUE, (uint8_t)(0), (float)(MAV_BOOL_TRUE), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0), (float)(0)); 
+    mavlink_msg_command_long_pack(system_id, component_id_mc, &pause ,system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)0, (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float)PX4_CUSTOM_MAIN_MODE_AUTO, (float)PX4_CUSTOM_SUB_MODE_AUTO_LOITER, 0, 0, 0, 0);
+    mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause ,system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)0, (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float)PX4_CUSTOM_MAIN_MODE_AUTO, (float)PX4_CUSTOM_SUB_MODE_AUTO_MISSION, 0, 0, 0, 0);
     mavlink_msg_mission_request_list_pack(system_id, component_id_mc, &mission_list_req, system_id, component_id_fc, MAV_MISSION_TYPE_FENCE);
     mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
@@ -314,7 +292,7 @@ void init(void){
 }
 
 void update_system(void){
-    mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, correct_coords.latt_e7, correct_coords.long_e7, correcting, 0, 0, 0, 0, (uint16_t)correct_coords.yaw);
+    mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, correct_coords.latt_e7, correct_coords.long_e7, outside, 0, 0, 0, 0, (uint16_t)correct_coords.yaw);
     change = false;
 }
 
