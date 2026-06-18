@@ -23,7 +23,7 @@
 // MAVLINK incoming
 mavlink_status_t status;
 mavlink_message_t msg;
-// mavlink_attitude_t attitude;
+mavlink_mission_item_int_t mission_item;
 mavlink_command_ack_t ack;
 mavlink_global_position_int_t position;
 mavlink_mission_count_t mission_count;
@@ -44,20 +44,19 @@ volatile int32_t lattitude, longitude;
 volatile uint16_t num_of_waypoints;
 struct repeating_timer timer;
 volatile bool ping = false, change = false;
-mavlink_message_t sys_status;
+mavlink_message_t sys_status, mission_item_req;
 coords_t correct_coords;
 // Core 0 variables and flags (for safety)
-volatile bool outside = false, first_message = true, calculate = false; 
+volatile bool outside = false, first_message = true, calculate = false, print = false; 
 
 // Coords setup + geofence as a global variable
 coords_t * mission_coords;
-coords_t geofence_coords[] = {{549227908, 98168756}, {549231019, 98168033}, {549230972, 98165858}, {549227828, 98166772}};
-geofence_t geofence = {sizeof(geofence_coords)/sizeof(coords_t), NULL, {INT32_MAX, INT32_MIN}, {INT32_MAX, INT32_MIN}, 0, 0};
+// coords_t geofence_coords[] = {{549227908, 98168756}, {549231019, 98168033}, {549230972, 98165858}, {549227828, 98166772}};
+geofence_t geofence = {0, NULL, {INT32_MAX, INT32_MIN}, {INT32_MAX, INT32_MIN}, 0, 0};
 
 // Function prototypes
 void init(void);
 void update_system(void); 
-void request_mission(uint16_t);
 
 // FIFO interrupt handler for the secondary computing core
 void core1_FIFO(){
@@ -107,11 +106,8 @@ void on_uart_rx(){
                         multicore_fifo_push_blocking(SEND_PAUSE);
                         calculate = true;
                         outside = true;
-                        printf("\n\n\n\n\n\n\nOUTSIDE\nOUTSIDE\nOUTSIDE\nOUTSIDE\n\n\n\n\n\n\n\n\n");
-                        // printf("OUTSIDE\n");
                     }
                     else if(check_geofence(&geofence, position) && outside){
-                        printf("\n\n\n\nBack Inside\n\n\n\n");
                         outside = false;
                         multicore_fifo_push_blocking(SEND_UNPAUSE);
                     }
@@ -121,6 +117,7 @@ void on_uart_rx(){
  
                 case(MAVLINK_MSG_ID_MISSION_COUNT):
                     mavlink_msg_mission_count_decode(&msg, &mission_count);
+                    // printf("\nMission items recieved %d", mission_count.count);
                     watchdog_update();
                     multicore_fifo_push_blocking(REQUEST_FENCE);
                     multicore_fifo_push_blocking(mission_count.count);
@@ -128,43 +125,21 @@ void on_uart_rx(){
 
                 case(MAVLINK_MSG_ID_MISSION_ITEM_INT):
                     mavlink_msg_mission_item_int_decode(&msg, &mission_item);
-                    // printf("%d\n", mission_item.frame);
-                    if(mission_item.frame == MAV_MISSION_TYPE_FENCE){
-                        mission_coords[mission_item.seq] = (coords_t){mission_item.x, mission_item.y};
-                        if(mission_item.seq == mission_count.count){
-                            // multicore_fifo_push_blocking(SETUP_GEOFENCE);
-                        }
+                    // printf("\nMission item: %d %d", mission_item.mission_type, mission_item.seq);
+                    mission_coords[mission_item.seq] = (coords_t){mission_item.x, mission_item.y};
+                    // printf("\nlatt: %d, lon: %d", mission_item.x, mission_item.y);
+                    if(mission_item.seq == (mission_count.count - 1)){
+                        multicore_fifo_push_blocking(SETUP_GEOFENCE);
+                        print = true;
                     }
                     watchdog_update();
                 break;
-
-                case(MAVLINK_MSG_ID_COMMAND_ACK):
-                    mavlink_msg_command_ack_decode(&msg, &ack);
-                    watchdog_update();
-
-                    switch(ack.command){
-                        case(MAV_CMD_DO_SET_MODE):
-                            printf("\nMode change recieved, %d\n", ack.result);
-                            break;
-
-                        case(MAV_CMD_DO_REPOSITION):
-                            printf("\nReposition acknowledged, %d\n", ack.result);
-                            break;
-                    
-                    }
             break;
             }
         }
     }
     watchdog_update();
 }
-
-// mavlink_global_position_int_t test_position = {
-//     .lat = 549129094, 
-//     .lon = 97784961,
-// };
-
-// bool test_fired = false;
 
 void main(){
     init();
@@ -182,13 +157,12 @@ void main(){
             multicore_fifo_push_blocking(position.lon);
             calculate = false;
         }
-        // sleep_ms(5000);
-        // multicore_fifo_push_blocking(CALCULATE_RETURN);
-        // if(!test_fired){
-        //     multicore_fifo_push_blocking(SEND_PAUSE);
-        //     calculate = true;
-        //     test_fired = true; 
-        // }
+        if(print){
+            // for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
+            //     printf("\n\nCoord num: %d, latt: %d, lon: %d", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
+            // }
+            print = false;
+        }
     }   
 
     free(geofence.waypoints);
@@ -229,11 +203,19 @@ void core1_entry(){
 
             case(REQUEST_FENCE):
             core1_instruction = IDLE;
+            mission_coords = malloc(num_of_waypoints * sizeof(coords_t));
+            for(uint8_t i = 0; i < num_of_waypoints; i++){
+                mavlink_msg_mission_request_int_pack(system_id, component_id_mc, &mission_item_req, system_id, component_id_fc, i, MAV_MISSION_TYPE_FENCE);
+                send_mav(&mission_item_req);
+                sleep_ms(200);
+            }
             break;
 
             case(SETUP_GEOFENCE):
             core1_instruction = IDLE;
-            // geofence_setup(&geofence);
+            geofence.num_of_waypoints = num_of_waypoints;
+            geofence_setup(mission_coords, &geofence, geofence.num_of_waypoints);
+            free(mission_coords);
             break;
         }
         if(change){
@@ -280,11 +262,11 @@ void init(void){
     mavlink_msg_mission_request_list_pack(system_id, component_id_mc, &mission_list_req, system_id, component_id_fc, MAV_MISSION_TYPE_FENCE);
     mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
-    geofence_setup(geofence_coords, &geofence, geofence.num_of_waypoints);
-    // sleep_ms(5000);
-    // for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
-    //     printf("\nGeofence coord num: %d, lat: %d long: %d\n", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
-    // }
+    // geofence_setup(geofence_coords, &geofence, geofence.num_of_waypoints);
+    // // sleep_ms(5000);
+    // // for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
+    // //     printf("\nGeofence coord num: %d, lat: %d long: %d\n", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
+    // // }
 
     // watchdog_enable(1000, 1);
     multicore_launch_core1(core1_entry); // Launches the second core with its main function
@@ -294,14 +276,4 @@ void init(void){
 void update_system(void){
     mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, correct_coords.latt_e7, correct_coords.long_e7, outside, 0, 0, 0, 0, (uint16_t)correct_coords.yaw);
     change = false;
-}
-
-void request_mission(uint16_t num){
-    mavlink_mission_request_int_t mission_item_request;
-    mission_coords = malloc(num * sizeof(coords_t));
-
-    // for(uint16_t i = 0; i < num; i++){
-    //     mavlink_msg_mission_request_int_pack(system_id, component_id_mc, &mission_item_request, system_id, component_id_fc, i, MAV_MISSION_TYPE_FENCE);
-    //     send_mav(&mission_item_request);
-    // }
 }
