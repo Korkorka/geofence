@@ -9,7 +9,9 @@
 
 // Definition for safe Geofence offset and calculation for the degree offset, approximates the offset as in cartesians
 #define INIT_GEOF_OFFSET_M 15.0
-#define GEOF_OFFSET_M 5.0
+#define GEOF_OFFSET_M 20.0
+#define CONF_THRESH 3.0
+#define METER_TOLERANCE 0
 #define EARTH_RADIUS_M 6371000.0
 #define DEG2RAD(x) ((x) * M_PI / 180.0)
 #define RAD2DEG(x) ((x) * 180.0 / M_PI)

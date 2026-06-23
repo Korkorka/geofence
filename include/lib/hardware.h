@@ -61,6 +61,13 @@ enum PX4_CUSTOM_SUB_MODE_AUTO {
     PX4_CUSTOM_SUB_MODE_AUTO_PRECLAND = 8,
 };
 
+
+enum PX4_CUSTOM_SUB_MODE_POSCTL {
+	PX4_CUSTOM_SUB_MODE_POSCTL_POSCTL = 0,
+	PX4_CUSTOM_SUB_MODE_POSCTL_ORBIT,
+	PX4_CUSTOM_SUB_MODE_POSCTL_SLOW
+};
+
 int pico_led_init(void);
 void pico_set_led(bool);
 void send_mav(mavlink_message_t*);

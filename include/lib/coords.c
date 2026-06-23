@@ -13,6 +13,21 @@
 #include "pico/stdlib.h"
 #include "hardware/watchdog.h"
 
+bool check_return(coords_t correct_coords, mavlink_global_position_int_t position){
+    bool thresh = false;
+
+    vect3D_t correct = spherical_to_euclid(correct_coords);
+    vect3D_t pos = spherical_to_euclid((coords_t){position.lat, position.lon, 0});
+    vect3D_t PC = vect_subtract(correct, pos);
+    double dist = vect_len(PC);
+
+    if(dist <= (double)CONF_THRESH){
+        thresh = true;
+    }
+
+    return thresh;
+}
+
 void geofence_setup(coords_t* mission_coords, geofence_t* geofence, uint8_t num_of_waypoints){
     geofence->waypoints = malloc(num_of_waypoints * sizeof(coords_t)); // Allocates pointer memory to the waypoints data in the geofence struct
 

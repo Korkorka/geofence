@@ -29,8 +29,8 @@ mavlink_global_position_int_t position;
 mavlink_mission_count_t mission_count;
 mavlink_mission_item_int_t mission_item;
 // MAVLINK outgoing
-mavlink_message_t request_stream, pause, unpause, correct, correct_resume, pico_heartbeat, change_yaw, mission_list_req;
-const int32_t correct_alt = 50;
+mavlink_message_t request_stream, pause, unpause, correct, resume, pico_heartbeat, mission_list_req, go_copter, go_plane, sys_status, mission_item_req, alt_check;
+volatile int32_t correct_alt;
 const uint8_t system_id = 1, component_id_mc = 190, component_id_fc = 1, chan = MAVLINK_COMM_2, UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
 // UART handling parameters
 volatile uint8_t byte;
@@ -43,11 +43,10 @@ volatile core1_comms_t core0_instruction = RUNNING;
 volatile int32_t lattitude, longitude;
 volatile uint16_t num_of_waypoints;
 struct repeating_timer timer;
-volatile bool ping = false, change = false;
-mavlink_message_t sys_status, mission_item_req;
+volatile bool ping = false;
 coords_t correct_coords;
 // Core 0 variables and flags (for safety)
-volatile bool outside = false, first_message = true, calculate = false, print = false; 
+volatile bool outside = false, first_message = true, calculate = false, print = false, returned = false; 
 
 // Coords setup + geofence as a global variable
 coords_t * mission_coords;
@@ -106,9 +105,11 @@ void on_uart_rx(){
                         multicore_fifo_push_blocking(SEND_PAUSE);
                         calculate = true;
                         outside = true;
+                        correct_alt = position.alt / 1000 + METER_TOLERANCE;                                                                                                                                                                                                                                                                                    
                     }
-                    else if(check_geofence(&geofence, position) && outside){
+                    else if(check_geofence(&geofence, position) && outside && returned && check_return(correct_coords, position)){
                         outside = false;
+                        returned = false;
                         multicore_fifo_push_blocking(SEND_UNPAUSE);
                     }
 
@@ -125,13 +126,26 @@ void on_uart_rx(){
 
                 case(MAVLINK_MSG_ID_MISSION_ITEM_INT):
                     mavlink_msg_mission_item_int_decode(&msg, &mission_item);
+                    if(mission_item.mission_type == MAV_MISSION_TYPE_FENCE){
                     // printf("\nMission item: %d %d", mission_item.mission_type, mission_item.seq);
-                    mission_coords[mission_item.seq] = (coords_t){mission_item.x, mission_item.y};
-                    // printf("\nlatt: %d, lon: %d", mission_item.x, mission_item.y);
-                    if(mission_item.seq == (mission_count.count - 1)){
-                        multicore_fifo_push_blocking(SETUP_GEOFENCE);
-                        print = true;
+                        mission_coords[mission_item.seq] = (coords_t){mission_item.x, mission_item.y, 0};
+                        // printf("\nlatt: %d, lon: %d", mission_item.x, mission_item.y);
+                        if(mission_item.seq == (mission_count.count - 1)){
+                            multicore_fifo_push_blocking(SETUP_GEOFENCE);
+                            print = true;
+                        }
                     }
+                    // else if(mission_item.mission_type == MAV_MISSION_TYPE_MISSION){
+                    //     correct_alt = mission_item.z;
+                    // }
+                case(MAVLINK_MSG_ID_COMMAND_ACK):
+                    mavlink_msg_command_ack_decode(&msg, &ack);
+                    watchdog_update();
+                    // printf("\nRepos ack: %d", ack.result);
+                    if(ack.command == MAV_CMD_DO_REPOSITION && ack.result == MAV_RESULT_ACCEPTED){
+                        returned = true;
+                    }
+
                     watchdog_update();
                 break;
             break;
@@ -143,6 +157,7 @@ void on_uart_rx(){
 
 void main(){
     init();
+    sleep_ms(5000);
 
     while(true){
         pico_set_led(true);
@@ -158,9 +173,10 @@ void main(){
             calculate = false;
         }
         if(print){
-            // for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
-            //     printf("\n\nCoord num: %d, latt: %d, lon: %d", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
-            // }
+            for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
+                printf("\n\nCoord num: %d, latt: %d, lon: %d", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
+            }
+            // printf("\nCorrect alt: %d", correct_alt);
             print = false;
         }
     }   
@@ -179,26 +195,35 @@ void core1_entry(){
         switch(core1_instruction){
             case(SEND_STREAM_REQ):
             core1_instruction = IDLE;
+            // send_mav(&alt_check);
+            // sleep_ms(200);
             send_mav(&mission_list_req);
             break;
 
             case(SEND_PAUSE):
             core1_instruction = IDLE;
-            send_mav(&pause);
-            sleep_ms(3000);
+            // send_mav(&go_copter);
+            // sleep_ms(100);
+            // send_mav(&pause);
+            // sleep_ms(1000);
             break;
 
             case(CALCULATE_RETURN):
             core1_instruction = IDLE;
             correct_coords = calculate_return(&geofence, lattitude, longitude);
-            mavlink_msg_command_long_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(correct_coords.yaw), (float)(correct_coords.latt_e7), (float)(correct_coords.long_e7), (float)(correct_alt));
+            mavlink_msg_command_int_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_FRAME_GLOBAL, MAV_CMD_DO_REPOSITION, (uint8_t)(0), (uint8_t)(0), (float)(-1), (float)(MAV_DO_REPOSITION_FLAGS_CHANGE_MODE), (float)(0), (float)(correct_coords.yaw), (int32_t)(correct_coords.latt_e7), (int32_t)(correct_coords.long_e7), (float)(correct_alt));
+            // mavlink_msg_command_int_pack(system_id, component_id_mc, &correct, system_id, component_id_fc, MAV_FRAME_GLOBAL, MAV_CMD_OVERRIDE_GOTO, (uint8_t)(0), (uint8_t)(0), (float)(MAV_GOTO_DO_HOLD), (float)(MAV_GOTO_HOLD_AT_SPECIFIED_POSITION), (float)(MAV_FRAME_GLOBAL), (float)(correct_coords.yaw), (int32_t)(correct_coords.latt_e7), (int32_t)(correct_coords.long_e7), (float)(correct_alt)); 
             send_mav(&correct);
-            change = true; 
+            mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, correct_coords.latt_e7, correct_coords.long_e7, outside, 0, 0, 0, 0, (uint16_t)correct_coords.yaw);
             break;
 
             case(SEND_UNPAUSE):
             core1_instruction = IDLE;
+            sleep_ms(2000);
+            // send_mav(&resume);
             send_mav(&unpause);
+            // sleep_ms(200);
+            // send_mav(&go_plane);
             break;
 
             case(REQUEST_FENCE):
@@ -217,9 +242,6 @@ void core1_entry(){
             geofence_setup(mission_coords, &geofence, geofence.num_of_waypoints);
             free(mission_coords);
             break;
-        }
-        if(change){
-            update_system();
         }
         if(ping){
             send_mav(&pico_heartbeat);
@@ -257,23 +279,21 @@ void init(void){
     // Defines the stop messages and the request datastream message
     // mavlink_msg_command_long_pack(system_id, component_id_mc, &request_stream, system_id, component_id_fc, MAV_CMD_SET_MESSAGE_INTERVAL, (uint8_t)(0), (float)(MAVLINK_MSG_ID_GLOBAL_POSITION_INT), (float)(100000), (float)(0), (float)(0), (float)(0), (float)(0), (float)(1));
     mavlink_msg_heartbeat_pack( system_id, component_id_mc, &pico_heartbeat, MAV_TYPE_ONBOARD_CONTROLLER, (uint8_t)MAV_AUTOPILOT_INVALID, (uint8_t)MAV_MODE_FLAG_AUTO_ENABLED, (uint32_t)0, (uint8_t)MAV_STATE_ACTIVE);
-    mavlink_msg_command_long_pack(system_id, component_id_mc, &pause ,system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)0, (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float)PX4_CUSTOM_MAIN_MODE_AUTO, (float)PX4_CUSTOM_SUB_MODE_AUTO_LOITER, 0, 0, 0, 0);
-    mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause ,system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)0, (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float)PX4_CUSTOM_MAIN_MODE_AUTO, (float)PX4_CUSTOM_SUB_MODE_AUTO_MISSION, 0, 0, 0, 0);
+    mavlink_msg_command_long_pack(system_id, component_id_mc, &pause, system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)0, (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float)PX4_CUSTOM_MAIN_MODE_POSCTL, (float)PX4_CUSTOM_SUB_MODE_POSCTL_POSCTL, 0, 0, 0, 0);
+    mavlink_msg_command_long_pack(system_id, component_id_mc, &unpause, system_id, component_id_fc, MAV_CMD_DO_SET_MODE, (uint8_t)0, (float)(MAV_MODE_FLAG_CUSTOM_MODE_ENABLED), (float)PX4_CUSTOM_MAIN_MODE_AUTO, (float)PX4_CUSTOM_SUB_MODE_AUTO_MISSION, 0, 0, 0, 0);
+    mavlink_msg_command_long_pack(system_id, component_id_mc, &go_copter, system_id, component_id_fc, MAV_CMD_DO_VTOL_TRANSITION, (uint8_t)0, (float)(MAV_VTOL_STATE_MC), (float)2, 0, 0, 0, 0, 0);
+    mavlink_msg_command_long_pack(system_id, component_id_mc, &go_plane, system_id, component_id_fc, MAV_CMD_DO_VTOL_TRANSITION, (uint8_t)0, (float)(MAV_VTOL_STATE_FW), (float)0, 0, 0, 0, 0, 0);
     mavlink_msg_mission_request_list_pack(system_id, component_id_mc, &mission_list_req, system_id, component_id_fc, MAV_MISSION_TYPE_FENCE);
     mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    // mavlink_msg_command_int_pack(system_id, component_id_mc, &resume, system_id, component_id_fc, MAV_FRAME_GLOBAL, MAV_CMD_OVERRIDE_GOTO, (uint8_t)(0), (uint8_t)(0), (float)(MAV_GOTO_DO_CONTINUE), (float)(0), (float)(0), (float)(0), (int32_t)(0), (int32_t)(0), (float)(0)); 
+    // mavlink_msg_mission_request_int_pack(system_id, component_id_mc, &alt_check, system_id, component_id_fc, 1, MAV_MISSION_TYPE_MISSION);
 
     // geofence_setup(geofence_coords, &geofence, geofence.num_of_waypoints);
-    // // sleep_ms(5000);
-    // // for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
-    // //     printf("\nGeofence coord num: %d, lat: %d long: %d\n", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
-    // // }
+    // for(uint8_t i = 0; i < geofence.num_of_waypoints; i++){
+    //     printf("\nGeofence coord num: %d, lat: %d long: %d\n", i, geofence.waypoints[i].latt_e7, geofence.waypoints[i].long_e7);
+    // }
 
     // watchdog_enable(1000, 1);
     multicore_launch_core1(core1_entry); // Launches the second core with its main function
     watchdog_update();
-}
-
-void update_system(void){
-    mavlink_msg_global_position_int_pack(system_id, component_id_mc, &sys_status, 0, correct_coords.latt_e7, correct_coords.long_e7, outside, 0, 0, 0, 0, (uint16_t)correct_coords.yaw);
-    change = false;
 }
